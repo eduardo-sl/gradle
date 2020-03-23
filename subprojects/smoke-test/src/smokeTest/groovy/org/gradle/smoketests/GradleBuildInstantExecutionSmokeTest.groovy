@@ -20,6 +20,7 @@ import org.gradle.api.JavaVersion
 import org.gradle.api.specs.Spec
 import org.gradle.integtests.fixtures.AvailableJavaHomes
 import org.gradle.integtests.fixtures.DefaultTestExecutionResult
+import org.gradle.integtests.fixtures.executer.ExecutionResult
 import org.gradle.integtests.fixtures.executer.GradleContextualExecuter
 import org.gradle.integtests.fixtures.jvm.JvmInstallation
 import org.gradle.test.fixtures.file.TestFile
@@ -34,6 +35,14 @@ import java.text.SimpleDateFormat
     GradleContextualExecuter.isNotInstant() && GradleBuildJvmSpec.isAvailable()
 })
 class GradleBuildInstantExecutionSmokeTest extends AbstractSmokeTest {
+    private ExecutionResult result
+
+    ExecutionResult getResult() {
+        if (result == null) {
+            throw new IllegalStateException("Need to run a build before result is availble.")
+        }
+        return result
+    }
 
     def "can build gradle with instant execution enabled"() {
 
@@ -51,31 +60,41 @@ class GradleBuildInstantExecutionSmokeTest extends AbstractSmokeTest {
         ]
 
         when:
-        def result = instantRun(*supportedTasks)
+        instantRun(*supportedTasks)
 
         then:
         result.output.count("Calculating task graph as no instant execution cache is available") == 1
 
         when:
+        instantRun(*supportedTasks)
+
+        then:
+        result.output.count("Reusing instant execution cache") == 1
+        result.assertTaskSkipped(":distributions:binZip")
+        result.assertTaskSkipped(":core:integTest")
+
+        when:
         run("clean")
 
         and:
-        result = instantRun(*supportedTasks)
+        instantRun(*supportedTasks)
 
         then:
         result.output.count("Reusing instant execution cache") == 1
 
         and:
         file("build/distributions").allDescendants().count { it ==~ /gradle-.*-bin.zip/ } == 1
+        result.assertTasksExecutedAndNotSkipped(":core:integTest")
         new DefaultTestExecutionResult(file("subprojects/core"), "build", "", "", "integTest")
             .assertTestClassesExecuted("org.gradle.NameValidationIntegrationTest")
     }
 
-    private BuildResult instantRun(String... tasks) {
-        return run("-Dorg.gradle.unsafe.instant-execution=true", *tasks)
+    private void instantRun(String... tasks) {
+        result = run("-Dorg.gradle.unsafe.instant-execution=true", *tasks)
     }
 
     BuildResult run(String... tasks) {
+        result = null
         return runner(*(tasks + GRADLE_BUILD_TEST_ARGS)).build()
     }
 
